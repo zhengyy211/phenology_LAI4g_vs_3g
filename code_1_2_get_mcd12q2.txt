@@ -1,0 +1,69 @@
+// ------ STEP 1: Define export parameters ------
+var export_res = 500; // m
+
+var west_geom = ee.Geometry.BBox(-180, 30,   0, 90);
+var east_geom = ee.Geometry.BBox(   0, 30, 180, 90);
+var export_geoms = {'W': west_geom, 'E': east_geom};
+
+var year_start = 2001;
+var year_end   = 2015;
+var year_list  = ee.List.sequence(year_start, year_end);
+
+var phase_list = ['Greenup_1','MidGreenup_1','Peak_1','MidGreendown_1','Dormancy_1'];
+
+
+// ------ STEP 2: Compute multi-year mean NumCycles ------
+var mean_numCycles = ee.ImageCollection('MODIS/061/MCD12Q2')
+  .filterDate(year_start + '-01-01', year_end + '-12-31')
+  .select('NumCycles')
+  .mean();
+
+Export.image.toDrive({
+  image          : mean_numCycles,
+  description    : 'MCD12Q2_NumCycles_' + year_start + '_' + year_end,
+  folder         : 'mcd12q2',
+  region         : ee.Geometry.BBox(-180, 30, 180, 90),
+  crs            : 'EPSG:4326',
+  dimensions     : '4320x720',
+  maxPixels      : 1e13,
+  fileFormat     : 'GeoTIFF'
+});
+
+
+// ------ STEP 3: Load the MODIS MCD12Q2 dataset ------
+var data_MCD12Q2 = ee.ImageCollection('MODIS/061/MCD12Q2')
+  .filterDate(year_start + '-01-01', year_end + '-12-31')
+  .map(function(img) {
+    // Mask pixels where the multi-year mean NumCycles != 1
+    var mask = mean_numCycles.eq(1);
+    return img.updateMask(mask).select(phase_list);
+  });
+
+
+// ------ STEP 4: Export each year and band ------
+year_list.evaluate(function(years) {
+    years.forEach(function(year) {
+      
+      // Filter the dataset for each year.
+      var yearly_data = data_MCD12Q2.filter(ee.Filter.calendarRange(year, year, 'year'));
+      
+      // Loop through each band and export data.
+      phase_list.forEach(function(phase) {
+        
+        var band_img = yearly_data.select([phase]).first();
+        
+        Object.keys(export_geoms).forEach(function(hemi) {
+          Export.image.toDrive({
+            image       : band_img,
+            description : 'MCD12Q2_' + phase + '_' + year + '_' + hemi,
+            folder      : 'mcd12q2',
+            region      : export_geoms[hemi],
+            crs         : 'EPSG:4326',
+            scale       : export_res,
+            maxPixels   : 1e13,
+            fileFormat  : 'GeoTIFF'
+          });
+        });
+      });
+    });
+});
