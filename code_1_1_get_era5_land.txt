@@ -1,0 +1,48 @@
+// ------ STEP 1: Define export parameters ------
+var export_geom = ee.Geometry.BBox(-180, 30, 180, 90);
+var export_dims = '4320x720';
+
+var year_st = 1981;
+var year_ed = 2015;
+var years = ee.List.sequence(year_st, year_ed);
+
+
+// ------ STEP 2: Load the ERA5 Land dataset ------
+var data_era5 = ee.ImageCollection('ECMWF/ERA5_LAND/MONTHLY_AGGR')
+  .filter(ee.Filter.date(year_st + '-01-01', year_ed + '-12-31'))
+  .filterBounds(export_geom)
+  .map(function(img) {
+    
+    var month = img.date().get('month');
+    var n_days = ee.Number(ee.Date(img.get('system:time_start')).advance(1, 'month')
+                          .difference(ee.Date(img.get('system:time_start')), 'day'));
+                          
+    var srad_wm2 = img.select('surface_solar_radiation_downwards_sum')
+                       .divide(n_days.multiply(86400))
+                       .rename('srad');
+  
+    return img.addBands(srad_wm2).select('srad').clip(export_geom);
+  });
+  
+
+// ------ STEP 3: Export yearly images with 12 bands ------
+years.evaluate(function(year_list) {
+  year_list.forEach(function(year) {
+    
+    // Filter the dataset for each year.
+    var yearly_data = data_era5.filter(ee.Filter.calendarRange(year, year, 'year'))
+                                .sort('month') // Make sure months are in order
+                                .toBands();
+      
+    Export.image.toDrive({
+      image       : yearly_data,
+      description : 'era5_land_srad_' + year,
+      folder      : 'era5_land',
+      region      : export_geom,
+      crs         : 'EPSG:4326',
+      dimensions  : export_dims,
+      maxPixels   : 1e13,
+      fileFormat  : 'GeoTIFF'
+    });
+  });
+});
